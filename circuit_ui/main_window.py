@@ -53,5 +53,12 @@ class MainWindow(QMainWindow):
         # Ambos botones ejecutan exactamente la misma acción.
         self.sidebar.component_requested.connect(self._on_component_requested)
 
-    def _on_component_requested(self, _component_key: str) -> None:
-        self.editor.add_circle()
+        # Modo flecha: botón <-> editor (Esc en el editor desmarca el botón).
+        self.sidebar.connect_mode_toggled.connect(self.editor.set_connect_mode)
+        self.editor.connect_mode_changed.connect(self.sidebar.set_connect_checked)
+
+    def _on_component_requested(self, component_key: str) -> None:
+        if component_key.startswith("op_"):
+            self.editor.add_block(component_key[len("op_"):])  # gain / sum / convolution
+        else:
+            self.editor.add_block("circle")  # los dos botones PNG siguen creando el círculo

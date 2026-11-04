@@ -52,6 +52,14 @@ QToolButton#ComponentButton:pressed {
     border-bottom-color: #9DBDF6;
 }
 
+QToolButton#ComponentButton:checked {   /* modo flecha activo = hundido */
+    background: #D3E4FA;
+    border-top-color: #4382CE;
+    border-left-color: #5C90D2;
+    border-right-color: #8DB0EC;
+    border-bottom-color: #9DBDF6;
+}
+
 /* ---- Cabecera y área de trabajo ---- */
 QLabel#ProjectTitle {
     color: #2A2A2A;
