@@ -1,3 +1,4 @@
+
 # PoC de interfaz de simulación (referencia visual: DSSIM) — PySide6 / Qt 6
 
 Prueba de concepto **solo de interfaz**: ventana principal con menú, barra lateral con dos
@@ -98,3 +99,4 @@ Ver el informe de pruebas realizadas y limitaciones en la entrega.
   borra `PROJECT_TITLE` y su `QLabel` en `main_window.py`.
 - No hay zoom ni autodesplazamiento: si el usuario se desplaza, los círculos nuevos aparecen
   en la zona que está viendo.
+
