@@ -1,0 +1,21 @@
+# Entornos virtuales de Python
+.venv/
+venv/
+env/
+ENV/
+
+# Entornos de Conda
+.conda/
+conda-meta/
+pkgs/
+
+# Archivos de Python
+__pycache__/
+*.py[cod]
+*.pyc
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# Archivos temporales
+*.log
+.DS_Store
