@@ -1,8 +1,11 @@
 """Ventana principal: menú superior + barra lateral + área de trabajo."""
+from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QMainWindow, QVBoxLayout, QWidget
 
+from .dialogs import show_report
 from .editor_view import EditorView
 from .sidebar import ComponentSidebar
+from .signal_graph import evaluate, format_report
 from .styles import STYLESHEET
 
 MENU_TITLES = ("Project", "Analysis", "View", "Plot")  # sin acciones en esta PoC
@@ -57,8 +60,20 @@ class MainWindow(QMainWindow):
         self.sidebar.connect_mode_toggled.connect(self.editor.set_connect_mode)
         self.editor.connect_mode_changed.connect(self.sidebar.set_connect_checked)
 
+        # Botón Ejecutar -> ventana con el resultado.
+        self.sidebar.run_requested.connect(self._on_run_requested)
+
+        # Ctrl+Z (Cmd+Z en macOS): deshace la última acción. La acción se habilita/deshabilita sola.
+        undo_action = self.editor.undo_stack.createUndoAction(self, "Deshacer")
+        undo_action.setShortcut(QKeySequence.StandardKey.Undo)
+        self.addAction(undo_action)
+
     def _on_component_requested(self, component_key: str) -> None:
         if component_key.startswith("op_"):
             self.editor.add_block(component_key[len("op_"):])  # gain / sum / convolution
         else:
             self.editor.add_block("circle")  # los dos botones PNG siguen creando el círculo
+
+    def _on_run_requested(self) -> None:
+        nodes, edges = self.editor.build_graph()
+        show_report(self, "Resultado", format_report(evaluate(nodes, edges)))

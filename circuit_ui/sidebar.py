@@ -29,12 +29,30 @@ def _make_arrow_icon(size: int = 60) -> QIcon:
     return QIcon(pixmap)
 
 
+def _make_run_icon(size: int = 60) -> QIcon:
+    """Icono de 'ejecutar': triángulo de reproducción verde."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pixmap)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    pen = QPen(QColor("#1E6B31"))
+    pen.setWidthF(2.5)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    p.setPen(pen)
+    p.setBrush(QBrush(QColor("#2E9E44")))
+    p.drawPolygon(QPolygonF([QPointF(size * 0.28, size * 0.16), QPointF(size * 0.28, size * 0.84),
+                             QPointF(size * 0.84, size * 0.5)]))
+    p.end()
+    return QIcon(pixmap)
+
+
 class ComponentSidebar(QFrame):
     """Emite `component_requested(clave)` al pulsar un componente u operación
     y `connect_mode_toggled(bool)` al activar/desactivar el modo flecha."""
 
     component_requested = Signal(str)
     connect_mode_toggled = Signal(bool)
+    run_requested = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -64,6 +82,10 @@ class ComponentSidebar(QFrame):
         )
         self._connect_button.setCheckable(True)
         self._connect_button.toggled.connect(self.connect_mode_toggled.emit)
+
+        self._layout.addSpacing(GROUP_SPACING)
+        run_button = self._add_button(_make_run_icon(), "run", "Run: calculate and show the result")
+        run_button.clicked.connect(lambda _c=False: self.run_requested.emit())
 
     def _add_button(self, icon: QIcon, key: str, tooltip: str) -> QToolButton:
         button = QToolButton(self)

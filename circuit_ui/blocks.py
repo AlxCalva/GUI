@@ -1,14 +1,16 @@
-"""Bloques y flechas del diagrama (Qt gráfico, sin lógica de señales)."""
+"""Bloques y flechas del diagrama (Qt gráfico; las reglas y el cálculo viven en signal_graph)."""
 import math
 from typing import Callable, NamedTuple
 
-from PySide6.QtCore import QPointF, Qt
+from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import (
     QBrush, QColor, QIcon, QPainter, QPainterPath, QPainterPathStroker, QPen, QPixmap, QPolygonF,
 )
 from PySide6.QtWidgets import (
     QGraphicsItem, QGraphicsPathItem, QStyle, QStyleOptionGraphicsItem,
 )
+
+from .signal_graph import default_value
 
 BLOCK_SIZE = 40.0            # diámetro / lado / altura en escala 1:1
 OUTLINE_WIDTH = 1.5
@@ -121,6 +123,16 @@ class BlockItem(QGraphicsPathItem):
             | QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
         )
         self.arrows: list["ArrowItem"] = []
+        self.name = ""                       # «Señal 1», «Multiplicación 2»… (lo asigna el editor)
+        self.value = default_value(kind)     # None si el bloque no tiene valor configurable
+
+    def set_name(self, name: str) -> None:
+        self.name = name
+        self.setToolTip(name)
+
+    def set_value(self, value: int) -> None:
+        self.value = value
+        self.update()
 
     def _apply_pen(self, selected: bool) -> None:
         pen = QPen(COLOR_SELECTED if selected else COLOR_NORMAL)
@@ -172,6 +184,22 @@ class BlockItem(QGraphicsPathItem):
 
     def paint(self, painter, option, widget=None) -> None:
         super().paint(painter, _no_selection(option), widget)
+        if self.value is None:
+            return
+        painter.save()
+        font = painter.font()
+        font.setBold(True)
+        if self.kind == "gain":   # el triángulo apunta a la derecha: el texto va en su parte ancha
+            font.setPixelSize(8)
+            rect, text = QRectF(-15, -10, 20, 20), f"\u00d7{self.value}"
+        else:
+            font.setPixelSize(13)
+            half = BLOCK_SIZE / 2
+            rect, text = QRectF(-half, -half, BLOCK_SIZE, BLOCK_SIZE), str(self.value)
+        painter.setFont(font)
+        painter.setPen(self.pen().color())
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
+        painter.restore()
 
 
 # --- Flecha ------------------------------------------------------------------------
@@ -189,10 +217,7 @@ class ArrowItem(QGraphicsPathItem):
         self.setZValue(0.5)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
         self._apply_style(False)
-        source.arrows.append(self)
-        target.arrows.append(self)
-        for arrow in list(source.arrows):  # incluye la inversa, para separarlas
-            arrow.update_geometry()
+        # El registro en los bloques se hace en attach() (lo llaman los comandos de deshacer).
 
     def _apply_style(self, selected: bool) -> None:
         color = COLOR_SELECTED if selected else COLOR_NORMAL
@@ -201,6 +226,14 @@ class ArrowItem(QGraphicsPathItem):
         pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
         self.setPen(pen)
         self.setBrush(QBrush(color))
+
+    def attach(self) -> None:
+        """Registra la flecha en sus dos bloques y recoloca las flechas afectadas."""
+        for block in (self.source, self.target):
+            if self not in block.arrows:
+                block.arrows.append(self)
+        for arrow in list(self.source.arrows):  # incluye la inversa, para separarlas
+            arrow.update_geometry()
 
     def detach(self) -> None:
         for block in (self.source, self.target):
