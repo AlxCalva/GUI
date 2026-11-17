@@ -1,9 +1,32 @@
 
 # PoC de interfaz de simulación (referencia visual: DSSIM) — PySide6 / Qt 6
 
-Prueba de concepto **solo de interfaz**: ventana principal con menú, barra lateral con dos
-botones y un área de trabajo con cuadrícula. Al pulsar cualquiera de los dos botones se crea
-un círculo en la escena gráfica. No hay simulación, ni arrastre, ni cables.
+Prueba de concepto de interfaz: ventana principal con menú, barra lateral de bloques y un
+área de trabajo con cuadrícula donde se colocan, mueven y conectan bloques con flechas.
+Incluye configuración de valores (doble clic), validación de conexiones, ejecución con
+ventana de resultado y deshacer (Ctrl+Z).
+
+## Uso del editor
+| Acción | Cómo |
+|---|---|
+| Crear bloque | Clic en un botón de la barra lateral (círculos = señales de entrada) |
+| Mover | Arrastrar (se ajusta a la malla) |
+| Editar valor | **Doble clic** en un círculo (señal 0-999) o en un triángulo (factor 0-999) |
+| Conectar | Botón flecha → arrastrar de un bloque a otro. El botón se **desactiva solo** tras el intento; Esc lo cancela |
+| Ejecutar | Botón ▶ (verde): abre una ventana con el resultado |
+| Deshacer | **Ctrl+Z** (Cmd+Z en macOS): crear, mover, conectar, editar valor, eliminar |
+| Eliminar | Seleccionar y pulsar Supr |
+
+### Reglas de conexión (`circuit_ui/signal_graph.py`)
+- Círculo (señal de entrada): solo emite; **no** recibe flechas (círculo→círculo y triángulo→círculo están bloqueados).
+- Triángulo (multiplicación): **una sola entrada**; salidas ilimitadas (puede alimentar a n bloques).
+- Sin conexiones duplicadas, sin conectar un bloque consigo mismo, sin ciclos.
+- Suma y convolución: de momento no disponibles (se rechazan con aviso). La suma admitirá varias entradas.
+- Al conectar una señal a un triángulo se pide el factor; si se cancela, no se crea la flecha.
+
+### Ejecución
+Cada triángulo sin flechas de salida es una salida: resultado = señal × factores a lo largo del camino.
+Se avisa (sin ejecutar) si hay un triángulo sin entrada, ciclos o bloques no disponibles; una señal sin conectar solo genera una advertencia.
 
 ## Requisitos
 - Python 3.9 o superior (probado el código con sintaxis de 3.9+; se recomienda 3.11/3.12)
@@ -93,7 +116,8 @@ Ver el informe de pruebas realizadas y limitaciones en la entrega.
 
 ## Limitaciones conocidas
 - Los menús de la barra superior están vacíos (solo apariencia).
-- Los círculos no se pueden mover, borrar ni conectar (fuera de alcance).
+- Sin rehacer (Redo) ni guardar/abrir proyecto.
+- Valores solo enteros de 0 a 999 (constantes `MAX_DIGITS` / `MIN_VALUE` en `signal_graph.py`).
 - Escena finita (4000×3000): tras ~3000 círculos el nuevo se crea en el centro aunque se solape.
 - Se incluye un rótulo estático «New Project» (presente en la referencia); para quitarlo,
   borra `PROJECT_TITLE` y su `QLabel` en `main_window.py`.

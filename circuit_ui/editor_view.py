@@ -1,13 +1,19 @@
-"""Área de trabajo: escena con cuadrícula, bloques movibles, flechas, zoom y desplazamiento."""
+"""Área de trabajo: escena con cuadrícula, bloques movibles, flechas, zoom, desplazamiento,
+edición de valores (doble clic) y deshacer (QUndoStack)."""
 import math
 from typing import Optional
 
-from PySide6.QtCore import QLineF, QPoint, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen
-from PySide6.QtWidgets import QGraphicsLineItem, QGraphicsScene, QGraphicsView
+from PySide6.QtCore import QLineF, QPoint, QPointF, QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QPainter, QPen, QUndoStack
+from PySide6.QtWidgets import QGraphicsLineItem, QGraphicsScene, QGraphicsView, QMessageBox
 
 from .blocks import BLOCK_SIZE, ArrowItem, BlockItem
+from .commands import (
+    AddArrowCommand, AddBlockCommand, MoveBlocksCommand, RemoveItemsCommand, SetValueCommand,
+)
+from .dialogs import ask_value
 from .placement import Point, find_free_position, snap_to_grid
+from .signal_graph import RULES, MAX_VALUE, Edge, Node, has_value, validate_connection
 
 GRID_SIZE = 20                       # px entre líneas (unidades de escena)
 GRID_COLOR = QColor("#DEDEDE")
@@ -76,14 +82,18 @@ class EditorView(QGraphicsView):
         self._connect_mode = False
         self._link_source: Optional[BlockItem] = None
         self._preview: Optional[QGraphicsLineItem] = None
+        self._press_positions: dict[BlockItem, QPointF] = {}   # para detectar movimientos
+
+        self.undo_stack = QUndoStack(self)   # Ctrl+Z lo conecta MainWindow
 
     # --- API pública -------------------------------------------------------------
     def add_block(self, kind: str = "circle") -> None:
         """Crea un bloque en una posición libre, preferentemente centrada y visible."""
         x, y = self._choose_position()
         item = BlockItem(kind)
+        item.set_name(self._next_name(kind))
         item.setPos(x, y)
-        self._scene.addItem(item)
+        self.undo_stack.push(AddBlockCommand(self._scene, item))   # push ejecuta redo() = addItem
 
     def add_circle(self) -> None:
         self.add_block("circle")
@@ -108,14 +118,13 @@ class EditorView(QGraphicsView):
         blocks = [i for i in selected if isinstance(i, BlockItem)]
         for block in blocks:
             arrows.update(block.arrows)
-        for arrow in arrows:
-            arrow.detach()
-            self._scene.removeItem(arrow)
-        for block in blocks:
-            self._scene.removeItem(block)
-        for item in self._scene.items():       # las flechas inversas vuelven a centrarse
-            if isinstance(item, ArrowItem):
-                item.update_geometry()
+        if blocks or arrows:
+            self.undo_stack.push(RemoveItemsCommand(self._scene, blocks, list(arrows)))
+
+    def build_graph(self) -> tuple[dict[int, Node], list[Edge]]:
+        """Foto del diagrama (sin Qt) para validar y ejecutar."""
+        nodes, edges, _ids = self._snapshot()
+        return nodes, edges
 
     # --- Ratón / teclado ---------------------------------------------------------
     def _apply_cursor(self) -> None:
@@ -156,7 +165,22 @@ class EditorView(QGraphicsView):
                 self._scene.addItem(self._preview)
             event.accept()   # en modo conexión no se mueve ni se selecciona nada
             return
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._press_positions = {b: b.pos() for b in self._blocks()}
         super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            if not self._connect_mode:
+                block = self._block_at(event.position().toPoint())
+                if block is not None and has_value(block.kind):
+                    self._edit_block_value(block)
+                    event.accept()
+                    return
+            else:
+                event.accept()   # en modo conexión el doble clic no hace nada
+                return
+        super().mouseDoubleClickEvent(event)
 
     def mouseMoveEvent(self, event) -> None:
         if self._panning:
@@ -183,12 +207,17 @@ class EditorView(QGraphicsView):
         if self._link_source is not None and event.button() == Qt.MouseButton.LeftButton:
             source = self._link_source
             target = self._block_at(event.position().toPoint())
-            self._cancel_link()
-            if target is not None:
+            if target is None or target is source:
+                self._cancel_link()   # soltó en vacío (o fue un clic): el modo sigue activo
+            else:
+                # El modo flecha es de un solo uso: se desactiva al intentar conectar
+                # (haya o no flecha), y también desmarca el botón de la barra lateral.
+                self.set_connect_mode(False)
                 self._connect_blocks(source, target)
             event.accept()
             return
         super().mouseReleaseEvent(event)
+        self._commit_moves()
 
     def wheelEvent(self, event) -> None:
         delta = event.angleDelta().y()
@@ -214,15 +243,67 @@ class EditorView(QGraphicsView):
             super().keyPressEvent(event)
 
     # --- Internos ----------------------------------------------------------------
+    def _blocks(self) -> list[BlockItem]:
+        return [i for i in self._scene.items() if isinstance(i, BlockItem)]
+
+    def _snapshot(self) -> tuple[dict[int, Node], list[Edge], dict[BlockItem, int]]:
+        blocks = sorted(self._blocks(), key=lambda b: (b.kind, b.name))
+        ids = {block: index for index, block in enumerate(blocks)}
+        nodes = {ids[b]: Node(b.kind, b.name, b.value) for b in blocks}
+        edges = [(ids[a.source], ids[a.target]) for a in self._scene.items()
+                 if isinstance(a, ArrowItem) and a.source in ids and a.target in ids]
+        return nodes, edges, ids
+
+    def _next_name(self, kind: str) -> str:
+        base = RULES[kind].name
+        numbers = [int(b.name.rsplit(" ", 1)[-1]) for b in self._blocks()
+                   if b.kind == kind and b.name.rsplit(" ", 1)[-1].isdigit()]
+        return f"{base} {max(numbers, default=0) + 1}"
+
+    def _warn(self, title: str, message: str) -> None:
+        QMessageBox.warning(self, title, message)
+
     def _connect_blocks(self, source: BlockItem, target: BlockItem) -> None:
-        if source is target:
+        nodes, edges, ids = self._snapshot()
+        error = validate_connection(nodes, edges, ids[source], ids[target])
+        if error is not None:
+            self._warn("Conexión no válida", error)
             return
-        if any(a.source is source and a.target is target for a in source.arrows):
-            return   # ya existe esa conexión
-        self._scene.addItem(ArrowItem(source, target))
+
+        new_factor = None
+        if target.kind == "gain":   # al conectar una señal a un triángulo se elige el factor
+            new_factor = ask_value(
+                self, "Factor de multiplicación",
+                f"Valor por el que «{target.name}» multiplica la señal (0-{MAX_VALUE}):", target.value)
+            if new_factor is None:
+                return   # canceló: no se crea la flecha
+
+        arrow = ArrowItem(source, target)
+        self.undo_stack.beginMacro("Conectar bloques")   # un solo Ctrl+Z deshace factor + flecha
+        if new_factor is not None and new_factor != target.value:
+            self.undo_stack.push(SetValueCommand(target, target.value, new_factor))
+        self.undo_stack.push(AddArrowCommand(self._scene, arrow))
+        self.undo_stack.endMacro()
+
+    def _edit_block_value(self, block: BlockItem) -> None:
+        if block.kind == "circle":
+            title, prompt = "Señal de entrada", f"Valor de «{block.name}» (0-{MAX_VALUE}):"
+        else:
+            title, prompt = "Factor de multiplicación", f"Factor de «{block.name}» (0-{MAX_VALUE}):"
+        value = ask_value(self, title, prompt, block.value)
+        if value is not None and value != block.value:
+            self.undo_stack.push(SetValueCommand(block, block.value, value))
+
+    def _commit_moves(self) -> None:
+        """Si el arrastre movió bloques, lo registra como una sola acción deshacible."""
+        moves = [(b, old, b.pos()) for b, old in self._press_positions.items()
+                 if b.scene() is self._scene and b.pos() != old]
+        self._press_positions = {}
+        if moves:
+            self.undo_stack.push(MoveBlocksCommand(moves))
 
     def _block_centers(self) -> list[Point]:
-        return [(i.pos().x(), i.pos().y()) for i in self._scene.items() if isinstance(i, BlockItem)]
+        return [(b.pos().x(), b.pos().y()) for b in self._blocks()]
 
     def _visible_scene_rect(self) -> QRectF:
         return self.mapToScene(self.viewport().rect()).boundingRect().intersected(self.sceneRect())
