@@ -11,13 +11,16 @@ from .styles import STYLESHEET
 MENU_TITLES = ("Project", "Analysis", "View", "Plot")  # sin acciones en esta PoC
 PROJECT_TITLE = "New Project"  # etiqueta estática, como en la referencia
 
+# Qué crea cada botón con imagen de la barra lateral.
+COMPONENT_KINDS = {"component_1": "integrator", "component_2": "circle"}
+
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("DSSIM - PoC de interfaz")
         self.resize(1100, 650)
-        self.setMinimumSize(640, 420)
+        self.setMinimumSize(640, 560)
         self.setStyleSheet(STYLESHEET)
 
         self._build_menu_bar()
@@ -70,9 +73,9 @@ class MainWindow(QMainWindow):
 
     def _on_component_requested(self, component_key: str) -> None:
         if component_key.startswith("op_"):
-            self.editor.add_block(component_key[len("op_"):])  # gain / sum / convolution
+            self.editor.add_block(component_key[len("op_"):])  # sin / cos / gain / sum / convolution
         else:
-            self.editor.add_block("circle")  # los dos botones PNG siguen creando el círculo
+            self.editor.add_block(COMPONENT_KINDS[component_key])
 
     def _on_run_requested(self) -> None:
         nodes, edges = self.editor.build_graph()

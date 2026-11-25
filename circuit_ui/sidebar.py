@@ -4,13 +4,17 @@ from PySide6.QtGui import QBrush, QColor, QIcon, QPainter, QPen, QPixmap, QPolyg
 from PySide6.QtWidgets import QFrame, QToolButton, QVBoxLayout
 
 from .assets import COMPONENT_ICON_FILES, load_pixmap
-from .blocks import BLOCK_SPECS, OPERATION_KINDS, make_block_icon
+from .blocks import BLOCK_SPECS, OPERATION_KINDS, WAVE_KINDS, make_block_icon
 
 SIDEBAR_WIDTH = 74
 BUTTON_SIZE = QSize(50, 40)
 ICON_SIZE = QSize(30, 30)
 BUTTON_SPACING = 3
-GROUP_SPACING = 12
+GROUP_SPACING = 8
+COMPONENT_TOOLTIPS = (
+    "Digital integrator  z\u207b\u00b9 / (1 \u2212 z\u207b\u00b9)",   # component_1.png
+    "Constant signal",                                                     # component_2.png
+)
 
 
 def _make_arrow_icon(size: int = 60) -> QIcon:
@@ -67,7 +71,13 @@ class ComponentSidebar(QFrame):
         for index, file_name in enumerate(COMPONENT_ICON_FILES, start=1):
             key = f"component_{index}"
             icon = QIcon(load_pixmap(file_name))  # lanza AssetLoadError si falla
-            button = self._add_button(icon, key, f"Component {index}")
+            button = self._add_button(icon, key, COMPONENT_TOOLTIPS[index - 1])
+            button.clicked.connect(lambda _c=False, k=key: self.component_requested.emit(k))
+
+        self._layout.addSpacing(GROUP_SPACING)
+        for kind in WAVE_KINDS:
+            key = f"op_{kind}"
+            button = self._add_button(make_block_icon(kind), key, BLOCK_SPECS[kind].title)
             button.clicked.connect(lambda _c=False, k=key: self.component_requested.emit(k))
 
         self._layout.addSpacing(GROUP_SPACING)

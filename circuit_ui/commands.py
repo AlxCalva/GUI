@@ -90,3 +90,33 @@ class SetValueCommand(QUndoCommand):
 
     def undo(self) -> None:
         self._block.set_value(self._old)
+
+
+class SetParamsCommand(QUndoCommand):
+    """Cambia los parámetros de un seno / coseno."""
+
+    def __init__(self, block: BlockItem, old: dict, new: dict) -> None:
+        super().__init__("Cambiar parámetros")
+        self._block, self._old, self._new = block, dict(old), dict(new)
+
+    def redo(self) -> None:
+        self._block.set_params(self._new)
+
+    def undo(self) -> None:
+        self._block.set_params(self._old)
+
+
+class SetWaypointsCommand(QUndoCommand):
+    """Añade, mueve o elimina articulaciones de una flecha."""
+
+    def __init__(self, arrow: ArrowItem, old: list, new: list) -> None:
+        super().__init__("Editar flecha")
+        self._arrow = arrow
+        self._old = [QPointF(p) for p in old]
+        self._new = [QPointF(p) for p in new]
+
+    def redo(self) -> None:
+        self._arrow.set_waypoints(self._new)
+
+    def undo(self) -> None:
+        self._arrow.set_waypoints(self._old)

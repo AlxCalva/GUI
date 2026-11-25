@@ -7,13 +7,16 @@ from PySide6.QtCore import QLineF, QPoint, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QUndoStack
 from PySide6.QtWidgets import QGraphicsLineItem, QGraphicsScene, QGraphicsView, QMessageBox
 
-from .blocks import BLOCK_SIZE, ArrowItem, BlockItem
+from .blocks import BLOCK_SIZE, ArrowItem, BlockItem, WaypointHandle
 from .commands import (
-    AddArrowCommand, AddBlockCommand, MoveBlocksCommand, RemoveItemsCommand, SetValueCommand,
+    AddArrowCommand, AddBlockCommand, MoveBlocksCommand, RemoveItemsCommand, SetParamsCommand,
+    SetValueCommand, SetWaypointsCommand,
 )
-from .dialogs import ask_value
+from .dialogs import ask_value, ask_wave_params
 from .placement import Point, find_free_position, snap_to_grid
-from .signal_graph import RULES, MAX_VALUE, Edge, Node, has_value, validate_connection
+from .signal_graph import (
+    RULES, MAX_VALUE, Edge, Node, has_params, has_value, validate_connection,
+)
 
 GRID_SIZE = 20                       # px entre líneas (unidades de escena)
 GRID_COLOR = QColor("#DEDEDE")
@@ -83,6 +86,7 @@ class EditorView(QGraphicsView):
         self._link_source: Optional[BlockItem] = None
         self._preview: Optional[QGraphicsLineItem] = None
         self._press_positions: dict[BlockItem, QPointF] = {}   # para detectar movimientos
+        self._handle_drag = None   # (flecha, articulaciones_antes) mientras se arrastra un tirador
 
         self.undo_stack = QUndoStack(self)   # Ctrl+Z lo conecta MainWindow
 
@@ -167,19 +171,32 @@ class EditorView(QGraphicsView):
             return
         if event.button() == Qt.MouseButton.LeftButton:
             self._press_positions = {b: b.pos() for b in self._blocks()}
+            top = self._top_item_at(event.position().toPoint())
+            self._handle_drag = ((top.arrow, [QPointF(p) for p in top.arrow.waypoints])
+                                 if isinstance(top, WaypointHandle) else None)
         super().mousePressEvent(event)
 
     def mouseDoubleClickEvent(self, event) -> None:
+        """Doble clic: en un bloque edita sus valores; en una flecha añade una articulación;
+        en una articulación la elimina."""
         if event.button() == Qt.MouseButton.LeftButton:
-            if not self._connect_mode:
-                block = self._block_at(event.position().toPoint())
-                if block is not None and has_value(block.kind):
-                    self._edit_block_value(block)
-                    event.accept()
-                    return
-            else:
+            if self._connect_mode:
                 event.accept()   # en modo conexión el doble clic no hace nada
                 return
+            pos = event.position().toPoint()
+            item = self._top_item_at(pos)
+            if isinstance(item, WaypointHandle):
+                self._remove_waypoint(item)
+            elif isinstance(item, BlockItem):
+                if has_value(item.kind) or has_params(item.kind):
+                    self._edit_block_value(item)
+            elif isinstance(item, ArrowItem):
+                self._add_waypoint(item, self.mapToScene(pos))
+            else:
+                super().mouseDoubleClickEvent(event)
+                return
+            event.accept()
+            return
         super().mouseDoubleClickEvent(event)
 
     def mouseMoveEvent(self, event) -> None:
@@ -218,6 +235,7 @@ class EditorView(QGraphicsView):
             return
         super().mouseReleaseEvent(event)
         self._commit_moves()
+        self._commit_handle_drag()
 
     def wheelEvent(self, event) -> None:
         delta = event.angleDelta().y()
@@ -249,7 +267,7 @@ class EditorView(QGraphicsView):
     def _snapshot(self) -> tuple[dict[int, Node], list[Edge], dict[BlockItem, int]]:
         blocks = sorted(self._blocks(), key=lambda b: (b.kind, b.name))
         ids = {block: index for index, block in enumerate(blocks)}
-        nodes = {ids[b]: Node(b.kind, b.name, b.value) for b in blocks}
+        nodes = {ids[b]: Node(b.kind, b.name, b.value, b.params) for b in blocks}
         edges = [(ids[a.source], ids[a.target]) for a in self._scene.items()
                  if isinstance(a, ArrowItem) and a.source in ids and a.target in ids]
         return nodes, edges, ids
@@ -286,6 +304,11 @@ class EditorView(QGraphicsView):
         self.undo_stack.endMacro()
 
     def _edit_block_value(self, block: BlockItem) -> None:
+        if block.params is not None:   # seno / coseno
+            params = ask_wave_params(self, block.kind, block.name, block.params)
+            if params is not None and params != block.params:
+                self.undo_stack.push(SetParamsCommand(block, block.params, params))
+            return
         if block.kind == "circle":
             title, prompt = "Señal de entrada", f"Valor de «{block.name}» (0-{MAX_VALUE}):"
         else:
@@ -293,6 +316,34 @@ class EditorView(QGraphicsView):
         value = ask_value(self, title, prompt, block.value)
         if value is not None and value != block.value:
             self.undo_stack.push(SetValueCommand(block, block.value, value))
+
+    def _top_item_at(self, pos: QPoint):
+        for item in self.items(pos):
+            if isinstance(item, (WaypointHandle, BlockItem, ArrowItem)):
+                return item
+        return None
+
+    def _add_waypoint(self, arrow: ArrowItem, scene_pos: QPointF) -> None:
+        snapped = QPointF(snap_to_grid(scene_pos.x(), GRID_SIZE), snap_to_grid(scene_pos.y(), GRID_SIZE))
+        index = arrow.insertion_index(scene_pos)
+        old = [QPointF(p) for p in arrow.waypoints]
+        self.undo_stack.push(SetWaypointsCommand(arrow, old, old[:index] + [snapped] + old[index:]))
+
+    def _remove_waypoint(self, handle: WaypointHandle) -> None:
+        arrow = handle.arrow
+        index = arrow.handle_index(handle)
+        old = [QPointF(p) for p in arrow.waypoints]
+        self.undo_stack.push(SetWaypointsCommand(arrow, old, old[:index] + old[index + 1:]))
+
+    def _commit_handle_drag(self) -> None:
+        """Si se arrastró un tirador, lo registra como una sola acción deshacible."""
+        if self._handle_drag is None:
+            return
+        arrow, old = self._handle_drag
+        self._handle_drag = None
+        new = [QPointF(p) for p in arrow.waypoints]
+        if new != old:
+            self.undo_stack.push(SetWaypointsCommand(arrow, old, new))
 
     def _commit_moves(self) -> None:
         """Si el arrastre movió bloques, lo registra como una sola acción deshacible."""
